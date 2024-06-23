@@ -1,0 +1,311 @@
+from flask import Flask, jsonify, Response
+from flask_cors import CORS
+import cv2
+import cv2 as cv;
+import mediapipe as mp
+import numpy as np;
+
+app = Flask(__name__)
+CORS(app)  # This will enable CORS for all routes
+
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose(static_image_mode=False)
+mp_drawing = mp.solutions.drawing_utils
+
+# Dummy variable for counting arm curls - replace with your actual logic
+counter_la = 0
+counter_ra=0
+
+def calculate_angle(landmarks,type="l_arm"):
+    left,middle,right=None,None,None;
+    if type=="l_arm":
+        left=[landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x,landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y]
+        middle=[landmarks[14].x,landmarks[14].y]
+        right=[landmarks[16].x,landmarks[16].y]
+    elif type=="r_arm":
+        left=[landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x,landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
+        middle=[landmarks[13].x,landmarks[13].y]
+        right=[landmarks[15].x,landmarks[15].y]
+
+    a=np.array(left)
+    b=np.array(middle)
+    c=np.array(right)
+    
+    radians=np.arctan2(c[1]-b[1],c[0]-b[0])-np.arctan2(a[1]-b[1],a[0]-b[0])
+    angle=np.abs(radians*180.0/np.pi)
+    if angle>180:
+        angle=360-angle;
+    return angle;
+
+def arm(stage,counter,angle):
+    if angle>130:
+        stage="UP"
+    elif angle<60 and stage=="UP":
+        stage="DOWN"
+        counter+=1;
+    return [counter,stage]
+
+def generate_frames():
+    global counter_la,counter_ra
+    global stage_la,stage_ra
+    cap = cv2.VideoCapture(0)
+    stage_la=None;
+    stage_ra=None;
+    counter_la=0   
+    counter_ra=0
+    while True:
+        ret, frame = cap.read()
+        # counter=0
+        if not ret:
+            break
+        width,height,z=frame.shape;
+        # Convert the image from BGR to RGB
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        
+        # Process the image and detect the pose
+        results = pose.process(image)
+        
+        # for arm curler logic
+        try:
+            landmarks=results.pose_landmarks.landmark
+            
+            #* arm curler logic by taking shoulder,wrist
+            
+            # *left arm
+            angle_la=calculate_angle(landmarks=landmarks,type="l_arm")
+            #^ for arm angle displaying on elbow
+            # ^cv.putText(image,str(angle),tuple(np.multiply(elbow,[width,height]).astype(int)),cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv.LINE_AA)    
+            
+            arm_curler=arm(stage=stage_la,counter=counter_la,angle=angle_la)
+            counter_la,stage_la=arm_curler[0],arm_curler[1]
+            cv.putText(image, 'LEFT', (15,12), 
+                    cv.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv.LINE_AA)
+            cv.putText(image, str(counter_la), 
+                        (10,60), 
+                        cv.FONT_HERSHEY_SIMPLEX, 1, (250,40,255), 2, cv.LINE_AA)
+            
+            # Stage data
+            cv.putText(image, 'STAGE', (65,12), 
+                        cv.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv.LINE_AA)
+            cv.putText(image, stage_la, 
+                        (80,60), 
+                        cv.FONT_HERSHEY_SIMPLEX, 1, (250,40,255), 2, cv.LINE_AA)
+            
+            # Right Arm
+            angle_ra=calculate_angle(landmarks=landmarks,type="r_arm")
+            arm_curler=arm(stage=stage_ra,counter=counter_ra,angle=angle_ra)
+            counter_ra,stage_ra=arm_curler[0],arm_curler[1]
+            cv.putText(image, 'Right', (15,90), 
+                    cv.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv.LINE_AA)
+            cv.putText(image, str(counter_ra), 
+                        (10,133), 
+                        cv.FONT_HERSHEY_SIMPLEX, 1, (250,40,255), 2, cv.LINE_AA)
+            
+            # Stage data
+            cv.putText(image, 'STAGE', (65,90),
+                        cv.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv.LINE_AA)
+            cv.putText(image, stage_ra, 
+                        (80,130), 
+                        cv.FONT_HERSHEY_SIMPLEX, 1, (250,40,255), 2, cv.LINE_AA)
+            
+        except:
+        #   counter=0;
+          print('eroor')
+        
+        # Draw the pose annotation on the image
+        
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+
+        # Logic for counting arm curls can go here
+        # Increment counter for the sake of example
+        
+
+        # Encode the frame in JPEG format
+        ret, buffer = cv2.imencode('.jpg', image)
+        if not ret:
+            continue
+        
+        # Convert to byte array and yield the frame in the multipart/x-mixed-replace content-type
+        frame = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/counter')
+def get_counter():
+    return jsonify({'count_la': counter_la,'count_ra':counter_ra})
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+
+
+# from flask import Flask
+# from flask_socketio import SocketIO
+# import base64
+# import cv2
+# import numpy as np
+# import mediapipe as mp
+
+# app = Flask(__name__)
+# socketio = SocketIO(app, cors_allowed_origins="*")
+
+# mp_pose = mp.solutions.pose
+# pose = mp_pose.Pose()
+
+# def process_frame(img):
+#     try:
+#         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+#         results = pose.process(img_rgb)
+#         landmarks = []
+#         if results.pose_landmarks:
+#             for landmark in results.pose_landmarks.landmark:
+#                 landmarks.append({
+#                     'x': landmark.x,
+#                     'y': landmark.y,
+#                     'visibility': landmark.visibility if hasattr(landmark, 'visibility') else None,
+#                 })
+#         return landmarks
+#     except Exception as e:
+#         print(f"Error in process_frame: {e}")
+#         return []
+
+# @socketio.on('connect')
+# def test_connect():
+#     print('Client connected')
+
+# @socketio.on('frame')
+# def handle_frame(data):
+#     print('Received frame')
+#     img_data = base64.b64decode(data.split(',')[1])
+#     img = cv2.imdecode(np.frombuffer(img_data, np.uint8), cv2.IMREAD_COLOR)
+#     # Process the image with your logic here
+#     print('Image processed')  # Update this with actual processing logic
+#     # After processing, emit back the results
+#     socketio.emit('pose_landmarks', {'landmarks': 'Your processed data here'})
+
+# if __name__ == '__main__':
+#     socketio.run(app, debug=True)
+
+
+server.py
+
+
+// import React, { useState, useEffect } from 'react';
+// import '../App.css';
+
+// function LiveFeed() {
+//     const [counter, setCounter] = useState(0);
+
+//     useEffect(() => {
+//         const fetchCounter = async () => {
+//             try {
+//                 const response = await fetch('http://localhost:5000/counter');
+//                 if (!response.ok) {
+//                     throw new Error('Network response was not ok');
+//                 }
+//                 const data = await response.json();
+//                 setCounter(data.count_la);
+//             } catch (error) {
+//                 console.error("There has been a problem with your fetch operation:", error);
+//             }
+//         };
+
+//         const intervalId = setInterval(fetchCounter, 1000);  // Fetch the counter every second
+
+//         return () => clearInterval(intervalId);  // Clear interval on component unmount
+//     }, []);
+
+//     return (
+//         <div className="App">
+//             <div className="container">
+//                 <div className="counter-box left">
+//                     <h2>{counter}</h2>
+//                     <p>Left Counter</p>
+//                 </div>
+//                 <div className="video-feed">
+//                     <img src="http://localhost:5000/video_feed" alt="Video Feed" />
+//                 </div>
+//                 <div className="counter-box right">
+//                     <h2>{counter}</h2>
+//                     <p>Right Counter</p>
+//                 </div>
+//             </div>
+//         </div>
+//     );
+// }
+
+// export default LiveFeed;
+import React, { useState, useEffect } from 'react';
+import '../App.css';
+
+function LiveFeed() {
+    const [counters, setCounters] = useState({});
+
+    useEffect(() => {
+        const fetchCounters = async () => {
+            try {
+                const response = await fetch('http://localhost:5000/counter');
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                console.log(data);
+                setCounters(data);
+            } catch (error) {
+                console.error("There has been a problem with your fetch operation:", error);
+            }
+        };
+
+        const intervalId = setInterval(fetchCounters, 1000);  // Fetch the counters every second
+
+        return () => clearInterval(intervalId);  // Clear interval on component unmount
+    }, []);
+
+    // Splitting counters into two groups
+    const counterKeys = Object.keys(counters);
+    const midIndex = Math.ceil(counterKeys.length / 2);
+    const leftCounters = counterKeys.slice(0, midIndex);
+    const rightCounters = counterKeys.slice(midIndex);
+
+    return (
+        <div className="App">
+            <div className="container" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                {/* Left Counters */}
+                <div className="counter-group">
+                    {leftCounters.map(counterKey => (
+                        <div className="counter-box" key={counterKey}>
+                            <h2>{counters[counterKey]}</h2>
+                            <p>{counterKey}</p>
+                        </div> 
+                    ))}
+                </div>
+                
+                {/* Video Feed */}
+                <div className="video-feed">
+                    <img src="http://localhost:5000/video_feed" alt="Video Feed" />
+                </div>
+
+                {/* Right Counters */}
+                <div className="counter-group">
+                    {rightCounters.map(counterKey => (
+                        <div className="counter-box" key={counterKey}>
+                            <h2>{counters[counterKey]}</h2>
+                            <p>{counterKey}</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export default LiveFeed;
+
+
+LiveFeed.js

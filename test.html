@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MediaPipe Pose Example</title>
+    <style>
+        body, html {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        #video {
+            width: 640px;
+            height: 480px;
+        }
+        #canvas {
+            width: 640px;
+            height: 480px;
+        }
+    </style>
+</head>
+<body>
+
+<video id="video" playsinline style="display:none;"></video>
+<canvas id="canvas"></canvas>
+
+<script type="module">
+  // Use ES6 import syntax to import Pose and Camera modules
+  import { Pose } from '@mediapipe/pose';
+  import { Camera } from '@mediapipe/camera_utils';
+  
+  const videoElement = document.getElementById('video');
+  const canvasElement = document.getElementById('canvas');
+  const canvasCtx = canvasElement.getContext('2d');
+
+  function onResults(results) {
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+      if (results.poseLandmarks) {
+          for (const landmark of results.poseLandmarks) {
+              canvasCtx.beginPath();
+              canvasCtx.arc(
+                  landmark.x * canvasElement.width,
+                  landmark.y * canvasElement.height,
+                  5,
+                  0,
+                  2 * Math.PI
+              );
+              canvasCtx.fillStyle = 'red';
+              canvasCtx.fill();
+          }
+      }
+      canvasCtx.restore();
+  }
+
+  const pose = new Pose({
+      locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+      },
+  });
+
+  pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      smoothSegmentation: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+  });
+
+  pose.onResults(onResults);
+
+  const camera = new Camera(videoElement, {
+      onFrame: async () => {
+          await pose.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+  });
+
+  camera.start();
+
+  window.onunload = () => {
+      camera.stop();
+  };
+</script>
+
+</body>
+</html>
+ 
